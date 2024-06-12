@@ -1,0 +1,57 @@
+to Claude
+Consider the following: I'm working with DBeaver. We have four years of data, 2019-2022. There are two schemas, ds_masked and pr_masked. In schema ds_masked there are tables (for each year Y) demo_Y, trip_Y trip_tbv_Y and in schema pr_masked there is a table fped_xwalk. The tables in schema ds_masked can be connected using panid, for each year. The table fped_xwalk can be connected to the trip_Y table using the connector upc. I need code to do the following. 
+
+Generate the comment "STEP 1 HH roster". Then, create a roster of panid where the panid is present in every year. For each panid, keep the column panid and projection61k as panid and weight_Y, respectively. Save as a new table in pr_masked as a new table called hhroster. Mark this as "STEP 1 END".
+The next task is to build the consumer table for the Consumer Nutrition data data by year. First, leave a comment "STEP 2: CN data". Start by merging the trip_Y table to the fped_xwalk table using upc. Keep only the rows that merge plus the rows from table trip_Y. Create a new column mcn_Y which flags 1 when a row merged and 0 when the row contains only columns from table trip_Y. Generate a column containing the month in column purdate. Generate a new column totalekg which contains the calculation using columns quantity and ediblewgtgm: (quantity/ediblewgtgm)/1000. Then collapse the table as the sum of totalekg by panid upc ec year and month, meaning each row now contains the sum of totalekg by panid upc ec year and month. Collapse the table again as the sum of totalekg and the count of upc, by panid ec year and month; meaning that for columns totalekg and upc, each row now contains the sum of totalekg and the count of upc respectively, by panid ec year and month. Create this into table consumer_Y.
+
+
+
+/* STEP 1 HH roster */
+CREATE TABLE pr_masked.hhroster AS
+SELECT panid, 
+      projection61k AS weight_2019
+FROM ds_masked.demo_2019
+INTERSECT
+SELECT panid,
+      projection61k AS weight_2020  
+FROM ds_masked.demo_2020
+INTERSECT
+SELECT panid,
+      projection61k AS weight_2021
+FROM ds_masked.demo_2021  
+INTERSECT
+SELECT panid,
+      projection61k AS weight_2022
+FROM ds_masked.demo_2022;
+
+/* STEP 1 END */
+
+/* STEP 2: CN data */
+CREATE TABLE pr_masked.consumer_2019 AS
+WITH trip_fped AS (
+ SELECT t.panid, t.upc, t.purdate, t.quantity, t.ediblewgtgm, f.ec
+ FROM ds_masked.trip_2019 t
+ LEFT JOIN pr_masked.fped_xwalk f
+   ON t.upc = f.upc
+),
+mcn AS (
+ SELECT *, 
+   CASE WHEN ec IS NOT NULL THEN 1 ELSE 0 END AS mcn_2019,
+   EXTRACT(MONTH FROM purdate) AS month,
+   (quantity / ediblewgtgm) / 1000 AS totalekg
+ FROM trip_fped
+),
+totals AS (
+ SELECT panid, upc, ec, EXTRACT(YEAR FROM purdate) AS year, month, 
+   SUM(totalekg) AS totalekg
+ FROM mcn
+ GROUP BY panid, upc, ec, year, month  
+),
+final AS (
+ SELECT panid, ec, year, month,
+   SUM(totalekg) AS totalekg, 
+   COUNT(upc) AS upc_count
+ FROM totals
+ GROUP BY panid, ec, year, month
+)
+SELECT * FROM final;
